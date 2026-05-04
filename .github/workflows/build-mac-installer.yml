@@ -1,0 +1,206 @@
+name: Build macOS Installer
+
+on:
+  push:
+    branches:
+      - release
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches:
+      - release
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version string (e.g. 1.0.0)'
+        required: false
+        default: ''
+
+jobs:
+  build-dmg:
+    name: Build Manimator.dmg
+    runs-on: macos-latest
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      # ── 2. Resolve version ───────────────────────────────────────────────────
+      - name: Resolve version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "push" && "${{ github.ref }}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="1.0.0-dev.$(date +%Y%m%d%H%M)"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $VERSION"
+
+      # ── 3. Set up Python 3.12 (PyInstaller-compatible; manimgl needs 3.10+) ─
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # ── 4. Install Homebrew deps ─────────────────────────────────────────────
+      - name: Install system dependencies
+        run: |
+          brew install create-dmg ffmpeg || true
+
+      # ── 5. Install Python deps + PyInstaller ─────────────────────────────────
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "setuptools<75"
+          pip install -r requirements.txt
+          pip install "pyglet==1.5.31"
+          pip install pyinstaller
+
+      # ── 6. Regenerate icon (runner has no pre-built .icns) ───────────────────
+      - name: Generate app icon
+        run: |
+          mkdir -p installer/assets/iconset.iconset
+          # Create a simple 512×512 icon using Python + PIL/Pillow as fallback
+          python - <<'PYEOF'
+          try:
+              from PyQt6.QtWidgets import QApplication
+              from PyQt6.QtGui import QPainter, QColor, QFont, QPixmap, QLinearGradient
+              from PyQt6.QtCore import Qt, QRect
+              import sys, os
+
+              # Use offscreen platform for CI
+              os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+              app = QApplication(sys.argv)
+              sizes = [16, 32, 64, 128, 256, 512]
+              base = "installer/assets/iconset.iconset"
+
+              for size in sizes:
+                  px = QPixmap(size, size)
+                  px.fill(Qt.GlobalColor.transparent)
+                  p = QPainter(px)
+                  p.setRenderHint(QPainter.RenderHint.Antialiasing)
+                  p.setPen(Qt.PenStyle.NoPen)
+                  g = QLinearGradient(0, 0, size, size)
+                  g.setColorAt(0, QColor("#1E293B"))
+                  g.setColorAt(1, QColor("#0F172A"))
+                  p.setBrush(g)
+                  p.drawRoundedRect(0, 0, size, size, size*0.18, size*0.18)
+                  g2 = QLinearGradient(size*0.1, size*0.1, size*0.9, size*0.9)
+                  g2.setColorAt(0, QColor("#3B82F6"))
+                  g2.setColorAt(1, QColor("#2563EB"))
+                  p.setBrush(g2)
+                  r = int(size * 0.35)
+                  p.drawEllipse(int(size*0.5-r), int(size*0.22-r*0.5), r*2, r*2)
+                  p.setPen(QColor("white"))
+                  f = QFont("Arial", max(8, size//4))
+                  f.setBold(True)
+                  p.setFont(f)
+                  p.drawText(QRect(0,int(size*0.45),size,int(size*0.5)),
+                             Qt.AlignmentFlag.AlignHCenter|Qt.AlignmentFlag.AlignVCenter,"M")
+                  p.end()
+                  px.save(f"{base}/icon_{size}x{size}.png", "PNG")
+                  if size <= 256:
+                      s2 = size*2
+                      px2 = QPixmap(s2, s2)
+                      px2.fill(Qt.GlobalColor.transparent)
+                      p2 = QPainter(px2)
+                      p2.setRenderHint(QPainter.RenderHint.Antialiasing)
+                      p2.setPen(Qt.PenStyle.NoPen)
+                      g3 = QLinearGradient(0,0,s2,s2)
+                      g3.setColorAt(0, QColor("#1E293B"))
+                      g3.setColorAt(1, QColor("#0F172A"))
+                      p2.setBrush(g3)
+                      p2.drawRoundedRect(0,0,s2,s2,s2*0.18,s2*0.18)
+                      g4 = QLinearGradient(s2*0.1,s2*0.1,s2*0.9,s2*0.9)
+                      g4.setColorAt(0, QColor("#3B82F6"))
+                      g4.setColorAt(1, QColor("#2563EB"))
+                      p2.setBrush(g4)
+                      r2 = int(s2*0.35)
+                      p2.drawEllipse(int(s2*0.5-r2),int(s2*0.22-r2*0.5),r2*2,r2*2)
+                      p2.setPen(QColor("white"))
+                      f2 = QFont("Arial", max(8,s2//4))
+                      f2.setBold(True)
+                      p2.setFont(f2)
+                      p2.drawText(QRect(0,int(s2*0.45),s2,int(s2*0.5)),
+                                  Qt.AlignmentFlag.AlignHCenter|Qt.AlignmentFlag.AlignVCenter,"M")
+                      p2.end()
+                      px2.save(f"{base}/icon_{size}x{size}@2x.png", "PNG")
+              print("Icons generated with PyQt6")
+          except Exception as e:
+              print(f"PyQt6 icon gen failed: {e}, using placeholder")
+              import subprocess
+              for size in [16,32,64,128,256,512]:
+                  subprocess.run(["convert", "-size", f"{size}x{size}",
+                                  "xc:#1E293B", f"installer/assets/iconset.iconset/icon_{size}x{size}.png"],
+                                 check=False)
+          PYEOF
+          iconutil -c icns installer/assets/iconset.iconset \
+                   -o installer/assets/Manimator.icns \
+            || echo "iconutil failed — continuing without custom icon"
+
+      # ── 7. Build .app bundle ─────────────────────────────────────────────────
+      - name: Build .app bundle
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cd installer
+          chmod +x build_mac.sh Manimator.sh
+          ./build_mac.sh --version "$VERSION"
+
+      # ── 8. Verify DMG was produced ───────────────────────────────────────────
+      - name: Verify build output
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          DMG="installer/dist/Manimator-${VERSION}.dmg"
+          if [[ ! -f "$DMG" ]]; then
+            echo "ERROR: DMG not found at $DMG"
+            ls -la installer/dist/ || true
+            exit 1
+          fi
+          SIZE=$(du -sh "$DMG" | cut -f1)
+          echo "DMG produced: $DMG ($SIZE)"
+
+      # ── 9. Upload DMG as build artifact ─────────────────────────────────────
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Manimator-${{ steps.version.outputs.version }}-macOS
+          path: installer/dist/Manimator-*.dmg
+          retention-days: 30
+
+      # ── 10. Create GitHub Release (tags only) ────────────────────────────────
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Manimator ${{ steps.version.outputs.version }}
+          body: |
+            ## Manimator ${{ steps.version.outputs.version }}
+
+            ### Installation
+            1. Download `Manimator-${{ steps.version.outputs.version }}.dmg`
+            2. Open the DMG and drag **Manimator.app** to `/Applications`
+            3. **First launch:** right-click → Open (Gatekeeper bypass for unsigned builds)
+            4. The app auto-installs Python dependencies on first run (~1–2 min)
+
+            ### Requirements
+            - macOS 12+
+            - Python 3.10+ (`brew install python@3.14`)
+            - ffmpeg for GIF export (`brew install ffmpeg`)
+            - An LLM backend (LM Studio, Ollama, or OpenRouter API key)
+
+            ### What's new
+            - Three-strategy animation quality improvements (example injection, post-processor, two-pass layout planning)
+            - Self-healing retry loop (up to 3 auto-fix attempts on render failure)
+            - Persistent mistake memory across sessions
+            - OpenRouter, Ollama, LM Studio, HuggingFace support
+          files: installer/dist/Manimator-*.dmg
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, 'dev') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
