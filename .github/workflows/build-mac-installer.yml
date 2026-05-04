@@ -20,6 +20,8 @@ jobs:
   build-dmg:
     name: Build Manimator.dmg
     runs-on: macos-latest
+    permissions:
+      contents: write   # needed to upload release assets and create GitHub Releases
 
     steps:
       # ── 1. Checkout ──────────────────────────────────────────────────────────
