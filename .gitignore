@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+*.spec
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# macOS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V3
+.Trashes
+*.swp
+*.swo
+
+# App data
+~/.manimator/
+videos/
+*.mp4
+*.gif
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# Logs
+*.log
+/tmp/manimator.log
+
+# Installer artifacts
+installer/dist/
+installer/*.dmg
+installer/build/
+installer/Manimator.app/
+
+# Test artifacts
+.pytest_cache/

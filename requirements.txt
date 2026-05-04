@@ -1,0 +1,4 @@
+PyQt6>=6.6.0
+PyQt6-Qt6>=6.6.0
+openai>=1.30.0
+manimgl>=1.6.1
